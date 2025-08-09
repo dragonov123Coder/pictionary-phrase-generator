@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { nouns, adjectives, verbs, extras } from "@/lib/words";
 
 export default function Home() {
   const [phrase, setPhrase] = useState<string>("");
@@ -19,18 +20,86 @@ export default function Home() {
         return;
       }
       if (!res.ok) {
-        const data = await res.json().catch(() => ({ error: "Failed" }));
-        throw new Error(data.error || `Request failed: ${res.status}`);
+        // Fallback to client generator when API isn't available (e.g., GitHub Pages)
+        await fallbackGenerate();
+        return;
       }
       const data = (await res.json()) as { phrase: string };
       setPhrase(data.phrase);
       setDepleted(false);
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : "Something went wrong";
-      setError(message);
+  } catch {
+      // Network or other error: fallback for static hosting
+      await fallbackGenerate();
     } finally {
       setLoading(false);
     }
+  };
+
+  // ---------- Client-only fallback for static hosting (GitHub Pages) ----------
+  const LS_KEY = "ppg_usedPhrases_v1";
+
+  function articleFor(word: string) {
+    const first = word[0]?.toLowerCase();
+    return ["a", "e", "i", "o", "u"].includes(first) ? "An" : "A";
+  }
+  function randomOf<T>(arr: T[]): T {
+    return arr[Math.floor(Math.random() * arr.length)];
+  }
+  function clientGeneratePhrase(): string {
+    const noun = randomOf(nouns);
+    const adj = randomOf(adjectives);
+    const verb = randomOf(verbs);
+    const extra = Math.random() < 0.6 ? ` ${randomOf(extras)}` : "";
+    return `${articleFor(adj)} ${adj} ${noun} ${verb}${extra}`;
+  }
+  function getUsedSet(): Set<string> {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      const arr = raw ? (JSON.parse(raw) as string[]) : [];
+      return new Set(arr);
+    } catch {
+      return new Set();
+    }
+  }
+  function saveUsedSet(set: Set<string>) {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem(LS_KEY, JSON.stringify(Array.from(set)));
+    } catch {
+      // ignore write errors (e.g., private mode)
+    }
+  }
+  async function fallbackGenerate() {
+    // Try to generate a new phrase not seen in this browser
+    const used = getUsedSet();
+    let candidate = "";
+    let attempts = 0;
+    const maxAttempts = 200;
+    while (attempts < maxAttempts) {
+      candidate = clientGeneratePhrase();
+      if (!used.has(candidate)) break;
+      attempts++;
+    }
+    if (attempts >= maxAttempts) {
+      setDepleted(true);
+      setPhrase("");
+      setError("");
+      return;
+    }
+    used.add(candidate);
+    saveUsedSet(used);
+    setPhrase(candidate);
+    setDepleted(false);
+    setError("");
+  }
+  const resetLocal = () => {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.removeItem(LS_KEY);
+      setDepleted(false);
+      setError("");
+    } catch {}
   };
 
   return (
@@ -61,13 +130,22 @@ export default function Home() {
             )}
           </div>
 
-          <button
-            onClick={getPhrase}
-            disabled={loading}
-            className="mt-8 inline-flex items-center justify-center rounded-full px-6 py-3 text-base font-semibold bg-white text-indigo-700 hover:bg-violet-50 active:bg-violet-100 disabled:opacity-60 transition-colors shadow-lg"
-          >
-            {loading ? "Generating…" : "Generate phrase"}
-          </button>
+          <div className="mt-8 flex items-center justify-center gap-3">
+            <button
+              onClick={getPhrase}
+              disabled={loading}
+              className="inline-flex items-center justify-center rounded-full px-6 py-3 text-base font-semibold bg-white text-indigo-700 hover:bg-violet-50 active:bg-violet-100 disabled:opacity-60 transition-colors shadow-lg"
+            >
+              {loading ? "Generating…" : "Generate phrase"}
+            </button>
+            <button
+              onClick={resetLocal}
+              className="inline-flex items-center justify-center rounded-full px-4 py-2 text-sm font-medium bg-white/10 hover:bg-white/20 active:bg-white/25 border border-white/30 text-white"
+              title="Reset local phrases (for static hosting fallback)"
+            >
+              Reset local
+            </button>
+          </div>
         </div>
       </main>
     </div>
